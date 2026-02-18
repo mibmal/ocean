@@ -124,32 +124,59 @@ class AzureDevopsClient(HTTPBaseClient):
     def __init__(
         self,
         organization_url: str,
-        personal_access_token: str,
+        personal_access_token: str | None = None,
         webhook_auth_username: Optional[str] = None,
+        credential: Any = None,
     ) -> None:
-        super().__init__(personal_access_token)
+        super().__init__(
+            personal_access_token=personal_access_token, credential=credential
+        )
         self._organization_base_url = organization_url
         self._advsec_base_url = f"{organization_url.replace('dev.', f'{ADVANCED_SECURITY_PUBLISHER_ID}.dev.')}"
         self.webhook_auth_username = webhook_auth_username
 
     @classmethod
+    def _create_credential_from_config(cls) -> tuple[str | None, Any]:
+        """Resolve authentication: PAT takes priority, falls back to DefaultAzureCredential."""
+        pat = ocean.integration_config.get("personal_access_token")
+        if pat:
+            return pat, None
+
+        from azure.identity.aio import DefaultAzureCredential
+
+        logger.info(
+            "No personal_access_token configured, using DefaultAzureCredential "
+            "(supports managed identity, workload identity, Azure CLI, etc.)"
+        )
+        return None, DefaultAzureCredential()
+
+    @classmethod
     def create_from_ocean_config(cls) -> "AzureDevopsClient":
         if cache := event.attributes.get("azure_devops_client"):
             return cache
+
+        pat, credential = cls._create_credential_from_config()
         azure_devops_client = cls(
             ocean.integration_config["organization_url"].strip("/"),
-            ocean.integration_config["personal_access_token"],
-            ocean.integration_config["webhook_auth_username"],
+            personal_access_token=pat,
+            credential=credential,
+            webhook_auth_username=ocean.integration_config.get(
+                "webhook_auth_username"
+            ),
         )
         event.attributes["azure_devops_client"] = azure_devops_client
         return azure_devops_client
 
     @classmethod
     def create_from_ocean_config_no_cache(cls) -> "AzureDevopsClient":
+        pat, credential = cls._create_credential_from_config()
         azure_devops_client = cls(
             ocean.integration_config["organization_url"].strip("/"),
-            ocean.integration_config["personal_access_token"],
-            ocean.integration_config["webhook_auth_username"],
+            personal_access_token=pat,
+            credential=credential,
+            webhook_auth_username=ocean.integration_config.get(
+                "webhook_auth_username"
+            ),
         )
         return azure_devops_client
 

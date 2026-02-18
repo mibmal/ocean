@@ -16,9 +16,19 @@ CONTINUATION_TOKEN_HEADER = "x-ms-continuationtoken"
 CONTINUATION_TOKEN_KEY = "continuationToken"
 MAX_TIMEMOUT_RETRIES = 3
 
+AZURE_DEVOPS_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
+
 
 class HTTPBaseClient:
-    def __init__(self, personal_access_token: str) -> None:
+    def __init__(
+        self,
+        personal_access_token: str | None = None,
+        credential: Any = None,
+    ) -> None:
+        if not personal_access_token and not credential:
+            raise ValueError(
+                "Either personal_access_token or credential must be provided"
+            )
         self._client = OceanAsyncClient(
             retry_config=RetryConfig(
                 retry_after_headers=[
@@ -28,6 +38,7 @@ class HTTPBaseClient:
             ),
         )
         self._personal_access_token = personal_access_token
+        self._credential = credential
         self._rate_limiter = AzureDevOpsRateLimiter()
 
     async def send_request(
@@ -39,8 +50,13 @@ class HTTPBaseClient:
         headers: Optional[dict[str, Any]] = None,
         timeout: int = 5,
     ) -> Response | None:
-        self._client.auth = BasicAuth("", self._personal_access_token)
         self._client.follow_redirects = True
+
+        if self._credential:
+            token = (await self._credential.get_token(AZURE_DEVOPS_SCOPE)).token
+            headers = {**(headers or {}), "Authorization": f"Bearer {token}"}
+        else:
+            self._client.auth = BasicAuth("", self._personal_access_token)
 
         try:
             async with self._rate_limiter:
@@ -60,7 +76,7 @@ class HTTPBaseClient:
             else:
                 if response.status_code == 401:
                     logger.error(
-                        f"Couldn't access url {url} . Make sure the PAT (Personal Access Token) is valid!"
+                        f"Couldn't access url {url}. Make sure your credentials (PAT or managed identity) are valid!"
                     )
                 logger.error(
                     f"Request with bad status code {response.status_code}: {method} to url {url}"

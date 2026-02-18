@@ -1,8 +1,11 @@
 import pytest
 from typing import Any
 from unittest.mock import AsyncMock, patch
-from httpx import Response, ReadTimeout
+from httpx import BasicAuth, Response, ReadTimeout
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 from azure_devops.client.base_client import (
+    AZURE_DEVOPS_SCOPE,
     HTTPBaseClient,
     CONTINUATION_TOKEN_HEADER,
     PAGE_SIZE,
@@ -302,3 +305,106 @@ async def test_get_paginated_by_top_and_skip_exhausts_retries(
             _ = [item async for page in generator for item in page]
 
         assert mock_send.call_count == 3
+
+
+# --- Auth mode tests ---
+
+
+@pytest.fixture
+def mock_credential() -> AsyncTokenCredential:
+    """Mock Azure credential that returns a dummy bearer token."""
+    cred = AsyncMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(
+        return_value=AccessToken("bearer-test-token", 9999999999)
+    )
+    return cred
+
+
+@pytest.fixture
+def mock_client_with_credential(
+    mock_credential: AsyncTokenCredential,
+) -> HTTPBaseClient:
+    return HTTPBaseClient(credential=mock_credential)
+
+
+def test_init_with_pat_sets_pat() -> None:
+    """PAT-based client stores the PAT."""
+    client = HTTPBaseClient(personal_access_token="my-pat")
+    assert client._personal_access_token == "my-pat"
+    assert client._credential is None
+
+
+def test_init_with_credential_sets_credential(
+    mock_credential: AsyncTokenCredential,
+) -> None:
+    """Credential-based client stores the credential."""
+    client = HTTPBaseClient(credential=mock_credential)
+    assert client._credential is mock_credential
+    assert client._personal_access_token is None
+
+
+def test_init_with_neither_raises_value_error() -> None:
+    """Must provide either PAT or credential."""
+    with pytest.raises(ValueError, match="Either personal_access_token or credential"):
+        HTTPBaseClient()
+
+
+@pytest.mark.asyncio
+async def test_send_request_with_pat_uses_basic_auth(
+    mock_client: HTTPBaseClient,
+) -> None:
+    """When PAT is configured, send_request uses BasicAuth."""
+    mock_response = AsyncMock(spec=Response)
+    mock_response.status_code = 200
+    mock_response.headers = {}
+
+    with patch.object(
+        mock_client._client, "request", return_value=mock_response
+    ):
+        with patch.object(mock_client._rate_limiter, "__aenter__", return_value=None):
+            with patch.object(mock_client._rate_limiter, "__aexit__", return_value=None):
+                with patch.object(
+                    mock_client._rate_limiter, "update_from_headers"
+                ):
+                    await mock_client.send_request(
+                        "GET", "https://dev.azure.com/test"
+                    )
+
+    assert isinstance(mock_client._client.auth, BasicAuth)
+
+
+@pytest.mark.asyncio
+async def test_send_request_with_credential_uses_bearer_token(
+    mock_client_with_credential: HTTPBaseClient,
+    mock_credential: AsyncTokenCredential,
+) -> None:
+    """When credential is configured, send_request acquires a bearer token."""
+    mock_response = AsyncMock(spec=Response)
+    mock_response.status_code = 200
+    mock_response.headers = {}
+
+    with patch.object(
+        mock_client_with_credential._client, "request", return_value=mock_response
+    ) as mock_request:
+        with patch.object(
+            mock_client_with_credential._rate_limiter,
+            "__aenter__",
+            return_value=None,
+        ):
+            with patch.object(
+                mock_client_with_credential._rate_limiter,
+                "__aexit__",
+                return_value=None,
+            ):
+                with patch.object(
+                    mock_client_with_credential._rate_limiter,
+                    "update_from_headers",
+                ):
+                    await mock_client_with_credential.send_request(
+                        "GET", "https://dev.azure.com/test"
+                    )
+
+    mock_credential.get_token.assert_called_once_with(AZURE_DEVOPS_SCOPE)
+    call_kwargs = mock_request.call_args
+    headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+    assert headers["Authorization"] == "Bearer bearer-test-token"
