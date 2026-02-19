@@ -11,9 +11,47 @@ from github.clients.auth.abstract_authenticator import (
 )
 from github.helpers.exceptions import AuthenticationException
 
+_JWT_EXPIRY_MINUTES = 10
+
+
+def generate_jwt(app_id: str, private_key: str) -> str:
+    """Generate a GitHub App JWT token for App-level API calls."""
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=_JWT_EXPIRY_MINUTES)
+    payload = {"iss": app_id, "iat": now, "exp": expires_at}
+    decoded_key = (
+        private_key
+        if private_key.startswith("-----BEGIN")
+        else base64.b64decode(private_key).decode()
+    )
+    return jwt.encode(payload, decoded_key, algorithm="RS256")
+
+
+class GitHubAppJWTAuthenticator(AbstractGitHubAuthenticator):
+    """Authenticator that always returns a fresh JWT.
+
+    Used for App-level GitHub API calls (e.g. GET /app/installations,
+    GET /users/{login}) where no installation token is needed.
+    """
+
+    def __init__(self, app_id: str, private_key: str) -> None:
+        self.app_id = app_id
+        self.private_key = private_key
+
+    async def get_token(self, **kwargs: Any) -> GitHubToken:
+        return GitHubToken(token=generate_jwt(self.app_id, self.private_key))
+
+    async def get_headers(self, **kwargs: Any) -> GitHubHeaders:
+        token = await self.get_token()
+        return GitHubHeaders(
+            Authorization=f"Bearer {token.token}",
+            Accept="application/vnd.github+json",
+            X_GitHub_Api_Version="2022-11-28",
+        )
+
 
 class GitHubAppAuthenticator(AbstractGitHubAuthenticator):
-    JWT_EXPIRY_MINUTES = 10
+    JWT_EXPIRY_MINUTES = _JWT_EXPIRY_MINUTES
 
     def __init__(
         self,
@@ -92,15 +130,5 @@ class GitHubAppAuthenticator(AbstractGitHubAuthenticator):
     def _generate_jwt(self) -> GitHubToken:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(minutes=self.JWT_EXPIRY_MINUTES)
-        payload = {
-            "iss": self.app_id,
-            "iat": now,
-            "exp": expires_at,
-        }
-        if self.private_key.startswith("-----BEGIN"):
-            decoded_private_key = self.private_key
-        else:
-            decoded_private_key = base64.b64decode(self.private_key).decode()
-
-        token = jwt.encode(payload, decoded_private_key, algorithm="RS256")
+        token = generate_jwt(self.app_id, self.private_key)
         return GitHubToken(token=token, expires_at=str(int(expires_at.timestamp())))

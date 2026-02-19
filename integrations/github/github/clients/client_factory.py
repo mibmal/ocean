@@ -12,7 +12,10 @@ from github.clients.auth.abstract_authenticator import AbstractGitHubAuthenticat
 from github.clients.auth.personal_access_token_authenticator import (
     PersonalTokenAuthenticator,
 )
-from github.clients.auth.github_app_authenticator import GitHubAppAuthenticator
+from github.clients.auth.github_app_authenticator import (
+    GitHubAppAuthenticator,
+    GitHubAppJWTAuthenticator,
+)
 from github.helpers.exceptions import MissingCredentials
 
 
@@ -43,6 +46,12 @@ class GitHubAuthenticatorFactory:
                 organization=organization,
                 github_host=github_host,
             )
+
+        if app_id and private_key:
+            logger.debug(
+                f"Creating GitHub App JWT Authenticator (no org) on {github_host}"
+            )
+            return GitHubAppJWTAuthenticator(app_id=app_id, private_key=private_key)
 
         raise MissingCredentials("No valid GitHub credentials provided.")
 
@@ -119,3 +128,29 @@ def create_github_client(
 ) -> AbstractGithubClient:
     factory = GithubClientFactory()
     return factory.get_client(client_type or GithubClientType.REST)
+
+
+def create_github_client_for_org(
+    org_login: str,
+    installation_id: Optional[str] = None,
+    client_type: GithubClientType = GithubClientType.REST,
+) -> AbstractGithubClient:
+    """Create a fresh org-scoped GitHub client with an installation token.
+
+    Used in multi-org GitHub App mode where each org needs its own authenticator
+    and installation token to access private resources.  Not cached — each call
+    returns a new instance.
+    """
+    github_host = ocean.integration_config["github_host"]
+    authenticator = GitHubAuthenticatorFactory.create(
+        github_host=github_host,
+        organization=org_login,
+        app_id=ocean.integration_config.get("github_app_id"),
+        installation_id=installation_id,
+        private_key=ocean.integration_config.get("github_app_private_key"),
+    )
+    client_cls: Type[AbstractGithubClient] = {
+        GithubClientType.REST: GithubRestClient,
+        GithubClientType.GRAPHQL: GithubGraphQLClient,
+    }[client_type]
+    return client_cls(**integration_config(authenticator))
