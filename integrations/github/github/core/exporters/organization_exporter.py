@@ -124,9 +124,17 @@ class RestOrganizationExporter(AbstractGithubExporter[GithubRestClient]):
             while url:
                 response = await http_client.get(url, headers=headers, params=params)
                 response.raise_for_status()
-                for inst in response.json():
+                raw_installations = response.json()
+                logger.info(
+                    f"GitHub App installations page: {len(raw_installations)} items"
+                )
+                for inst in raw_installations:
                     login = inst.get("account", {}).get("login")
                     installation_id = str(inst["id"])
+                    logger.debug(
+                        f"Installation: login={login}, id={installation_id}, "
+                        f"account_type={inst.get('account', {}).get('type')}"
+                    )
                     if login and (
                         not allowed_multi_organizations
                         or login in allowed_multi_organizations
@@ -137,7 +145,8 @@ class RestOrganizationExporter(AbstractGithubExporter[GithubRestClient]):
                 params = {}
 
         logger.info(
-            f"Discovered {len(installations)} GitHub App installation(s)"
+            f"Discovered {len(installations)} GitHub App installation(s): "
+            f"{[login for login, _ in installations]}"
         )
 
         batch = []

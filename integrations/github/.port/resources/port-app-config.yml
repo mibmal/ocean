@@ -1,78 +1,306 @@
-deleteDependentEntities: true
 createMissingRelatedEntities: true
-repositoryType: 'all'
+deleteDependentEntities: true
 resources:
   - kind: organization
-    selector:
-      query: 'true'
     port:
       entity:
         mappings:
+          blueprint: '"github_organization_v1"'
           identifier: .login
-          title: .login
-          blueprint: '"githubOrganization"'
           properties:
-            login: .login
-            id: .id
-            nodeId: .node_id
-            url: .url
-            reposUrl: .repos_url
-            eventsUrl: .events_url
-            hooksUrl: .hooks_url
-            issuesUrl: .issues_url
-            membersUrl: .members_url
-            publicMembersUrl: .public_members_url
-            avatarUrl: .avatar_url
-            description: if .description then .description else "" end
-  - kind: repository
+            description: .description
+            name: .name
+            type: .type
+            url: .html_url
+          title: .login
     selector:
       query: 'true'
-      includedFiles:
-        - README.md
-        - CODEOWNERS
+  - kind: repository
     port:
       entity:
         mappings:
+          blueprint: '"github_repository_v1"'
           identifier: .name
-          title: .name
-          blueprint: '"githubRepository"'
           properties:
-            description: if .description then .description else "" end
-            visibility: if .private then "private" else "public" end
-            defaultBranch: .default_branch
-            readme: .__includedFiles["README.md"]
-            codeowners: .__includedFiles["CODEOWNERS"]
+            archived: .archived
+            created_at: .created_at
+            default_branch: .default_branch
+            description: .description
+            disabled: .disabled
+            forks: .forks_count
+            is_fork: .fork
+            is_template: .is_template
+            language: .language
+            name: .name
+            open_issues: .open_issues_count
+            size: .size
+            stars: .stargazers_count
+            topics: .topics
+            updated_at: .updated_at
             url: .html_url
-            language: if .language then .language else "" end
+            visibility: .visibility
           relations:
             organization: .owner.login
-  - kind: pull-request
+          title: .name
     selector:
       query: 'true'
-      state: "open"
+  - kind: pull-request
     port:
       entity:
         mappings:
-          identifier: ".head.repo.name + (.id|tostring)"
-          title: ".title"
-          blueprint: '"githubPullRequest"'
+          blueprint: '"github_pull_request_v1"'
+          identifier: .id | tostring
           properties:
-            creator: (.user.login | gsub("\\["; "-") | gsub("\\](?=[^$])"; "-") | gsub("\\]$"; ""))
-            assignees: '[.assignees[].login | gsub("\\](?=[^$])"; "-") | gsub("\\]$"; "")]'
-            reviewers: '[.requested_reviewers[].login | gsub("\\](?=[^$])"; "-") | gsub("\\]$"; "")]'
-            status: ".state"
-            closedAt: ".closed_at"
-            updatedAt: ".updated_at"
-            mergedAt: ".merged_at"
-            createdAt: ".created_at"
-            prNumber: ".id"
-            link: ".html_url"
-            leadTimeHours: >-
-                (.created_at as $createdAt | .merged_at as $mergedAt |
-                ($createdAt | sub("\\..*Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) as $createdTimestamp |
-                ($mergedAt | if . == null then null else sub("\\..*Z$"; "Z") |
-                strptime("%Y-%m-%dT%H:%M:%SZ") | mktime end) as $mergedTimestamp |
-                if $mergedTimestamp == null then null else
-                (((($mergedTimestamp - $createdTimestamp) / 3600) * 100 | floor) / 100) end)
+            assignee_emails: (.assignees | map((.email // null)) | map(select(. != null)))
+            assignees: .assignees | map(.login)
+            closed_at: .closed_at
+            created_at: .created_at
+            creator: .user.login
+            creator_email: (.user.email // null)
+            is_draft: .draft
+            lead_time_hours: >-
+              (.created_at as $createdAt | .merged_at as $mergedAt |
+              ($createdAt | sub("\\..*Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) as $createdTimestamp |
+              ($mergedAt | if . == null then null else sub("\\..*Z$"; "Z") |
+              strptime("%Y-%m-%dT%H:%M:%SZ") | mktime end) as $mergedTimestamp |
+              if $mergedTimestamp == null then null else
+              (((($mergedTimestamp - $createdTimestamp) / 3600) * 100 | floor) / 100) end)
+            mergeable: .mergeable
+            merged_at: .merged_at
+            number: .number
+            reviewer_emails: >-
+              (.requested_reviewers | map((.email // null)) | map(select(. !=
+              null)))
+            reviewers: .requested_reviewers | map(.login)
+            state: .state
+            title: .title
+            updated_at: .updated_at
+            url: .html_url
           relations:
-            repository: .__repository
+            assignee_users: (.assignees | map((.email // null)) | map(select(. != null)))
+            creator_user: (.user.email // null)
+            github_assignees: .assignees | map(.login)
+            github_creator_user: .user.login
+            github_reviewers: .requested_reviewers | map(.login)
+            repository: .base.repo.name
+            reviewer_users: >-
+              (.requested_reviewers | map((.email // null)) | map(select(. !=
+              null)))
+          title: .title
+    selector:
+      query: 'true'
+  - kind: user
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_user_v1"'
+          identifier: .login
+          properties:
+            avatar_url: .avatar_url
+            bio: .bio
+            company: .company
+            created_at: .created_at
+            email: .email
+            followers: .followers
+            following: .following
+            location: .location
+            login: .login
+            name: .name
+            public_repos: .public_repos
+            site_admin: .site_admin
+            type: .type
+            url: .html_url
+            organizations: .__organizations
+            saml_identities: .__saml_identities
+          title: .login
+    selector:
+      query: 'true'
+  - kind: user
+    port:
+      entity:
+        mappings:
+          blueprint: '"_user"'
+          identifier: .email
+          properties: {}
+          relations:
+            github_user_v1: .login
+          title: .name // .login
+    selector:
+      query: '.email != null and .email != ""'
+  - kind: team
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_team_v1"'
+          identifier: .slug
+          properties:
+            created_at: .created_at
+            description: .description
+            members_count: .members_count
+            name: .name
+            permission: .permission
+            repos_count: .repos_count
+            slug: .slug
+            updated_at: .updated_at
+            url: .html_url
+          relations:
+            organization: .organization.login
+          title: .name
+    selector:
+      query: 'true'
+  - kind: issue
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_issue_v1"'
+          identifier: .id | tostring
+          properties:
+            assignees: .assignees | map(.login)
+            body: .body
+            closed_at: .closed_at
+            comments: .comments
+            created_at: .created_at
+            creator: .user.login
+            is_locked: .locked
+            labels: .labels | map(.name)
+            number: .number
+            state: .state
+            title: .title
+            updated_at: .updated_at
+          relations:
+            repository: .repository.name
+          title: .title
+    selector:
+      query: false and .__disabled_kind == true
+  - kind: workflow
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_workflow_v1"'
+          identifier: .id | tostring
+          properties:
+            created_at: .created_at
+            id: .id
+            name: .name
+            path: .path
+            state: .state
+            updated_at: .updated_at
+            url: .html_url
+          relations:
+            repository: .repository.name
+          title: .name
+    selector:
+      query: 'true'
+  - kind: workflow-run
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_workflow_run_v1"'
+          identifier: .id | tostring
+          properties:
+            conclusion: (.conclusion | if . == null or (. != "success" and . != "failure" and . != "neutral" and . != "cancelled" and . != "skipped" and . != "timed_out" and . != "action_required") then null else . end)
+            created_at: .created_at
+            event: .event
+            head_branch: .head_branch
+            head_sha: .head_sha
+            name: .name
+            run_attempt: .run_attempt
+            run_number: .run_number
+            status: .status
+            updated_at: .updated_at
+            url: .html_url
+          relations:
+            repository: .repository.name
+            workflow: .workflow_id | tostring
+          title: .name
+    selector:
+      query: 'true'
+  - kind: branch
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_branch_v1"'
+          identifier: .repository.name + "-" + .name
+          properties:
+            name: .name
+            protected: .protected
+            sha: .commit.sha
+          relations:
+            repository: .repository.name
+          title: .name
+    selector:
+      query: 'true'
+  - kind: environment
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_environment_v1"'
+          identifier: .repository.name + "-" + .name
+          properties:
+            created_at: .created_at
+            name: .name
+            updated_at: .updated_at
+            url: .html_url
+          relations:
+            repository: .repository.name
+          title: .name
+    selector:
+      query: 'true'
+  - kind: deployment
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_deployment_v1"'
+          identifier: .id | tostring
+          properties:
+            created_at: .created_at
+            description: .description
+            environment: .environment
+            production_environment: .production_environment
+            ref: .ref
+            sha: .sha
+            state: .state
+            task: .task
+            transient_environment: .transient_environment
+            updated_at: .updated_at
+            url: .url
+          relations:
+            repository: .repository.name
+          title: .environment + " - " + .sha[:7]
+    selector:
+      query: 'true'
+  - kind: collaborator
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_collaborator_v1"'
+          identifier: .repository.name + "-" + .login
+          properties:
+            login: .login
+            permission: .role_name | ascii_downcase
+            role_name: .role_name
+          relations:
+            repository: .repository.name
+            user: .login
+          title: .login + " on " + .repository.name
+    selector:
+      query: 'true'
+  - kind: file
+    port:
+      entity:
+        mappings:
+          blueprint: '"github_file_v1"'
+          identifier: .repository.name + "-" + (.path | gsub("/"; "-"))
+          properties:
+            download_url: .download_url
+            name: .name
+            path: .path
+            sha: .sha
+            size: .size
+            type: .type
+            url: .html_url
+          relations:
+            repository: .repository.name
+          title: .name
+    selector:
+      query: false and .__disabled_kind == true
