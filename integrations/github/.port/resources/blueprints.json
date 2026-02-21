@@ -234,7 +234,7 @@
     "relations": {
       "assignee_users": {
         "title": "Assignee Users",
-        "target": "_user",
+        "target": "github_user_v1",
         "required": false,
         "many": true
       },
@@ -258,7 +258,7 @@
       },
       "reviewer_users": {
         "title": "Reviewer Users",
-        "target": "_user",
+        "target": "github_user_v1",
         "required": false,
         "many": true
       },
@@ -270,7 +270,7 @@
       },
       "creator_user": {
         "title": "Creator User",
-        "target": "_user",
+        "target": "github_user_v1",
         "required": false,
         "many": false
       }

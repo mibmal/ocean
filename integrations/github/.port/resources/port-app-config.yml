@@ -77,15 +77,13 @@ resources:
             updated_at: .updated_at
             url: .html_url
           relations:
-            assignee_users: (.assignees | map((.email // null)) | map(select(. != null)))
-            creator_user: (.user.email // null)
+            assignee_users: .assignees | map(.login)
+            creator_user: .user.login
             github_assignees: .assignees | map(.login)
             github_creator_user: .user.login
             github_reviewers: .requested_reviewers | map(.login)
             repository: .base.repo.name
-            reviewer_users: >-
-              (.requested_reviewers | map((.email // null)) | map(select(. !=
-              null)))
+            reviewer_users: .requested_reviewers | map(.login)
           title: .title
     selector:
       query: 'true'
