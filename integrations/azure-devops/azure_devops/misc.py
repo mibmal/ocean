@@ -35,7 +35,8 @@ class Kind(StrEnum):
 
 
 ACTIVE_PULL_REQUEST_SEARCH_CRITERIA: dict[str, Any] = {
-    "searchCriteria.status": "active"
+    "searchCriteria.status": "active",
+    "$expand": "all",
 }
 
 
@@ -47,11 +48,13 @@ def create_closed_pull_request_search_criteria(
             "searchCriteria.status": "abandoned",
             "searchCriteria.queryTimeRangeType": "closed",
             "searchCriteria.minTime": min_time_datetime,
+            "$expand": "all",
         },
         {
             "searchCriteria.status": "completed",
             "searchCriteria.queryTimeRangeType": "closed",
             "searchCriteria.minTime": min_time_datetime,
+            "$expand": "all",
         },
     ]
 
