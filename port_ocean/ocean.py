@@ -14,6 +14,7 @@ from port_ocean.cache.base import CacheProvider
 from port_ocean.cache.disk import DiskCacheProvider
 from port_ocean.cache.memory import InMemoryCacheProvider
 from port_ocean.clients.port.client import PortClient
+from port_ocean.leader_election import LeaderElection
 from port_ocean.config.settings import (
     IntegrationConfiguration,
 )
@@ -107,6 +108,17 @@ class Ocean:
         self.resync_state_updater = ResyncStateUpdater(
             self.port_client, self.config.scheduled_resync_interval
         )
+
+        le_cfg = self.config.leader_election
+        self.leader_election = LeaderElection(
+            enabled=le_cfg.enabled,
+            integration_identifier=self.config.integration.identifier,
+            namespace=le_cfg.namespace,
+            lease_duration=le_cfg.lease_duration,
+            renew_deadline=le_cfg.renew_deadline,
+            retry_period=le_cfg.retry_period,
+        )
+
         self.app_initialized = False
 
         signal_handler.register(self._report_resync_aborted, priority=100)
@@ -163,6 +175,13 @@ class Ocean:
         self,
     ) -> None:
         async def execute_resync_all() -> None:
+            if not self.leader_election.is_leader:
+                logger.debug(
+                    "Skipping scheduled resync — not the leader",
+                    identity=self.leader_election.identity,
+                )
+                return
+
             await self.resync_state_updater.update_before_resync()
             logger.info("Starting a new scheduled resync")
             try:
@@ -266,6 +285,7 @@ class Ocean:
         @asynccontextmanager
         async def lifecycle(_: FastAPI) -> AsyncIterator[None]:
             try:
+                await self.leader_election.start()
                 await self.integration.start()
                 await self._register_addons()
                 await self._setup_scheduled_resync()
@@ -275,6 +295,7 @@ class Ocean:
                 logger.complete()
                 sys.exit("Server stopped")
             finally:
+                await self.leader_election.stop()
                 await signal_handler.exit()
 
         self.fast_api_app.router.lifespan_context = lifecycle

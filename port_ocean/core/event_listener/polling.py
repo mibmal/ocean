@@ -73,6 +73,14 @@ class PollingEventListener(BaseEventListener):
             logger.info(
                 f"Polling event listener iteration after {self.event_listener_config.interval}. Checking for changes"
             )
+
+            if not ocean.app.leader_election.is_leader:
+                logger.debug(
+                    "Skipping resync poll — not the leader",
+                    identity=ocean.app.leader_election.identity,
+                )
+                return
+
             integration = await ocean.app.port_client.get_current_integration()
             last_updated_at = integration["updatedAt"]
 

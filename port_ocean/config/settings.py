@@ -96,6 +96,14 @@ class ActionsProcessorSettings(BaseOceanModel, extra=Extra.allow):
     workers_count: int = Field(default=1)
 
 
+class LeaderElectionSettings(BaseOceanModel, extra=Extra.allow):
+    enabled: bool = Field(default=False)
+    namespace: str | None = Field(default=None)
+    lease_duration: int = Field(default=15)
+    renew_deadline: int = Field(default=10)
+    retry_period: int = Field(default=2)
+
+
 class IntegrationConfiguration(BaseOceanSettings, extra=Extra.allow):
     _integration_config_model: BaseModel | None = None
 
@@ -145,6 +153,9 @@ class IntegrationConfiguration(BaseOceanSettings, extra=Extra.allow):
     streaming: StreamingSettings = Field(default_factory=lambda: StreamingSettings())
     actions_processor: ActionsProcessorSettings = Field(
         default_factory=lambda: ActionsProcessorSettings()
+    )
+    leader_election: LeaderElectionSettings = Field(
+        default_factory=lambda: LeaderElectionSettings()
     )
 
     @validator("process_execution_mode")
