@@ -19,17 +19,17 @@ configurations:
     required: false
     type: string
     sensitive: true
-    description: Azure Client ID. For more information on how to create and manage credentials, see the <a href="https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal" target="_blank">Azure documentation</a>.
+    description: The client ID of your Azure service principal. If omitted, DefaultAzureCredential will be used (supports managed identity and workload identity). For more information on how to create and manage credentials, see the <a href="https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal" target="_blank">Azure documentation</a>.
   - name: azureClientSecret
     required: false
     type: string
     sensitive: true
-    description: Azure Client Secret. For more information on how to create and manage credentials, see the <a href="https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal" target="_blank">Azure documentation</a>.
+    description: The client secret of your Azure service principal. If omitted, DefaultAzureCredential will be used (supports managed identity and workload identity). For more information on how to create and manage credentials, see the <a href="https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal" target="_blank">Azure documentation</a>.
   - name: azureTenantId
     required: false
     type: string
     sensitive: true
-    description: Azure Tenant ID. For more information on how to create and manage credentials, see the <a href="https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal" target="_blank">Azure documentation</a>
+    description: The tenant ID of your Azure service principal. If omitted, DefaultAzureCredential will be used (supports managed identity and workload identity). For more information on how to create and manage credentials, see the <a href="https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal" target="_blank">Azure documentation</a>
 deploymentMethodRequirements:
   - type: default
     configurations: ['azureClientId', 'azureClientSecret', 'azureTenantId']

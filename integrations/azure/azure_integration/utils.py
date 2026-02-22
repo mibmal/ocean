@@ -3,9 +3,11 @@ import enum
 import typing
 
 from port_ocean.context.event import event
-from azure.identity.aio import DefaultAzureCredential
+from port_ocean.context.ocean import ocean
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.mgmt.resource.resources.v2022_09_01.aio import ResourceManagementClient
 
+from azure_integration.auth import AzureAuthenticatorFactory
 from azure_integration.overrides import (
     AzureSpecificKindsResourceConfig,
     AzureCloudResourceConfig,
@@ -14,6 +16,14 @@ from azure_integration.overrides import (
 )
 
 BATCH_SIZE = 20
+
+
+def create_azure_credential() -> AsyncTokenCredential:
+    return AzureAuthenticatorFactory.create(
+        tenant_id=ocean.integration_config.get("azure_tenant_id"),
+        client_id=ocean.integration_config.get("azure_client_id"),
+        client_secret=ocean.integration_config.get("azure_client_secret"),
+    )
 
 
 class ResourceKindsWithSpecialHandling(enum.StrEnum):
@@ -164,9 +174,9 @@ async def resource_client_context(
     subscription_id: str,
 ) -> typing.AsyncIterator[ResourceManagementClient]:
     """
-    Creates a resource client context manager that yields a resource client with the default azure credentials
+    Creates a resource client context manager that yields a resource client with the configured azure credentials
     """
-    async with DefaultAzureCredential() as credential:
+    async with create_azure_credential() as credential:
         async with ResourceManagementClient(
             credential=credential,
             subscription_id=subscription_id,

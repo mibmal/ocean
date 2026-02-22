@@ -1,5 +1,4 @@
 import http
-import os
 import typing
 
 from cloudevents.pydantic import CloudEvent
@@ -22,12 +21,12 @@ from port_ocean.context.ocean import ocean
 from port_ocean.core.models import Entity
 from port_ocean.core.ocean_types import ASYNC_GENERATOR_RESYNC_TYPE
 from port_ocean.utils.async_iterators import stream_async_iterators_tasks
-from azure.identity.aio import DefaultAzureCredential
 from azure.core.exceptions import ResourceNotFoundError
 from azure.mgmt.resource.subscriptions.aio import SubscriptionClient
 
 from azure_integration.utils import (
     ResourceKindsWithSpecialHandling,
+    create_azure_credential,
     resource_client_context,
     resolve_resource_type_from_resource_uri,
     batch_resources_iterator,
@@ -68,7 +67,7 @@ async def resync_resource_groups(kind: str) -> ASYNC_GENERATOR_RESYNC_TYPE:
     resource_selector = typing.cast(
         AzureSpecificKindSelector, get_current_resource_config().selector
     )
-    async with DefaultAzureCredential() as credential:
+    async with create_azure_credential() as credential:
         async with SubscriptionClient(credential=credential) as subscription_client:
             async for subscriptions_batch in batch_resources_iterator(
                 subscription_client.subscriptions.list,
@@ -96,7 +95,7 @@ async def resync_subscriptions(kind: str) -> ASYNC_GENERATOR_RESYNC_TYPE:
     resource_selector = typing.cast(
         AzureSpecificKindSelector, get_current_resource_config().selector
     )
-    async with DefaultAzureCredential() as credential:
+    async with create_azure_credential() as credential:
         async with SubscriptionClient(credential=credential) as subscription_client:
             async for subscriptions_batch in batch_resources_iterator(
                 subscription_client.subscriptions.list,
@@ -121,7 +120,7 @@ async def resync_cloud_resources(kind: str) -> ASYNC_GENERATOR_RESYNC_TYPE:
 async def resync_base_resources(
     kind: str, api_version: str
 ) -> ASYNC_GENERATOR_RESYNC_TYPE:
-    async with DefaultAzureCredential() as credential:
+    async with create_azure_credential() as credential:
         async with SubscriptionClient(credential=credential) as subscription_client:
             async for subscriptions_batch in batch_resources_iterator(
                 subscription_client.subscriptions.list,
@@ -170,7 +169,7 @@ async def resync_extension_resources(
     :return: Async generator of extension resources
     """
     with logger.contextualize(resource_kind=kind):
-        async with DefaultAzureCredential() as credential:
+        async with create_azure_credential() as credential:
             async with SubscriptionClient(credential=credential) as subscription_client:
                 async for subscriptions_batch in batch_resources_iterator(
                     subscription_client.subscriptions.list,
@@ -291,29 +290,4 @@ async def cloud_event_validation_middleware_handler(
 
 @ocean.on_start()
 async def on_start() -> None:
-    logger.info("Setting up credentials for Azure client")
-    azure_client_id = ocean.integration_config.get("azure_client_id")
-    azure_client_secret = ocean.integration_config.get("azure_client_secret")
-    azure_tenant_id = ocean.integration_config.get("azure_tenant_id")
-    if not azure_client_id or not azure_client_secret or not azure_tenant_id:
-        logger.info(
-            "Integration wasn't provided with override configuration for initializing client, proceeding with default"
-        )
-        return
-
-    if azure_client_id:
-        logger.info(
-            "Detected Azure client id, setting up environment variable for client id"
-        )
-        os.environ["AZURE_CLIENT_ID"] = azure_client_id
-    if azure_client_secret:
-        logger.info(
-            "Detected Azure client secret, setting up environment variable for client secret"
-        )
-        os.environ["AZURE_CLIENT_SECRET"] = azure_client_secret
-    if azure_tenant_id:
-        logger.info(
-            "Detected Azure tenant id, setting up environment variable for tenant id"
-        )
-        os.environ["AZURE_TENANT_ID"] = azure_tenant_id
-    logger.info("Azure client credentials set up")
+    logger.info("Starting Azure integration")
