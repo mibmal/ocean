@@ -308,8 +308,8 @@ class LeaderElection:
     async def _release_lease(self) -> None:
         """Release the lease on graceful shutdown so followers can take over immediately."""
         try:
-            assert self._coordination_v1 is not None
-            assert self._lease_name is not None
+            if not self._coordination_v1 or not self._lease_name:
+                return
 
             lease = await self._coordination_v1.read_namespaced_lease(  # type: ignore[union-attr]
                 name=self._lease_name, namespace=self._namespace
