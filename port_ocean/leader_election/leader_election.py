@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import random
 import socket
 from typing import TYPE_CHECKING, Callable, Awaitable
 
@@ -100,24 +101,50 @@ class LeaderElection:
                 pass
 
     async def _on_leadership_acquired(self, lease_name: str) -> None:
-        self._is_leader = True
         logger.info(
             "Acquired leadership",
             identity=self._identity,
             lease=lease_name,
         )
+        self._is_leader = True
         for cb in self._on_started_leading_callbacks:
-            await cb()
+            try:
+                await asyncio.wait_for(cb(), timeout=self._renew_deadline)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "on_started_leading callback timed out",
+                    identity=self._identity,
+                    timeout=self._renew_deadline,
+                )
+            except Exception as e:
+                logger.warning(
+                    "on_started_leading callback raised an error",
+                    identity=self._identity,
+                    error=str(e),
+                )
 
     async def _on_leadership_lost(self, lease_name: str) -> None:
-        self._is_leader = False
         logger.warning(
             "Lost leadership",
             identity=self._identity,
             lease=lease_name,
         )
+        self._is_leader = False
         for cb in self._on_stopped_leading_callbacks:
-            await cb()
+            try:
+                await asyncio.wait_for(cb(), timeout=self._renew_deadline)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "on_stopped_leading callback timed out",
+                    identity=self._identity,
+                    timeout=self._renew_deadline,
+                )
+            except Exception as e:
+                logger.warning(
+                    "on_stopped_leading callback raised an error",
+                    identity=self._identity,
+                    error=str(e),
+                )
 
     async def _run_election_loop(self) -> None:
         """Continuously attempt to acquire/renew the K8s Lease."""
@@ -166,9 +193,12 @@ class LeaderElection:
                     identity=self._identity,
                 )
 
-            sleep_seconds = (
-                self._renew_deadline if self._is_leader else self._retry_period
-            )
+            if self._is_leader:
+                sleep_seconds = self._renew_deadline
+            else:
+                # Add up to 10% jitter so followers don't all retry simultaneously
+                jitter = random.uniform(0, self._retry_period * 0.1)
+                sleep_seconds = self._retry_period + jitter
             await asyncio.sleep(sleep_seconds)
 
     async def _try_acquire_or_renew(
@@ -215,11 +245,17 @@ class LeaderElection:
                 spec.acquire_time = now_micro
                 spec.lease_transitions = (spec.lease_transitions or 0) + 1
 
-            await coordination_v1.replace_namespaced_lease(  # type: ignore[union-attr]
-                name=lease_name,
-                namespace=self._namespace,
-                body=lease,
-            )
+            try:
+                await coordination_v1.replace_namespaced_lease(  # type: ignore[union-attr]
+                    name=lease_name,
+                    namespace=self._namespace,
+                    body=lease,
+                )
+            except ApiException as e:
+                if e.status in (409, 422):
+                    # Another instance won the replace race — we lost this round
+                    return False
+                raise
             return True
 
         except ApiException as e:

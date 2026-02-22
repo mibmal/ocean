@@ -46,7 +46,7 @@ class ResyncStateUpdater:
                 tz=datetime.timezone.utc
             ).isoformat(),
             "nextResync": nest_resync,
-            "intervalInMinuets": _interval,
+            "intervalInMinutes": _interval,
         }
 
         integration = await self.port_client.update_integration_state(
@@ -77,7 +77,7 @@ class ResyncStateUpdater:
                 tz=datetime.timezone.utc
             ).isoformat(),
             "nextResync": nest_resync,
-            "intervalInMinuets": _interval,
+            "intervalInMinutes": _interval,
         }
 
         integration = await self.port_client.update_integration_state(

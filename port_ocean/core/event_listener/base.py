@@ -1,6 +1,7 @@
 from abc import abstractmethod
 from typing import TypedDict, Callable, Any, Awaitable
 
+from loguru import logger
 from pydantic import Extra
 
 from port_ocean.config.base import BaseOceanModel
@@ -65,7 +66,15 @@ class BaseEventListener:
     ) -> None:
         """
         Triggers the "on_resync" event.
+        Only the leader executes a full resync; followers skip silently.
         """
+        if not ocean.app.leader_election.is_leader:
+            logger.debug(
+                "Skipping resync — not the leader",
+                identity=ocean.app.leader_election.identity,
+            )
+            return
+
         await self._before_resync()
         try:
             resync_succeeded = await self.events["on_resync"](resync_args)

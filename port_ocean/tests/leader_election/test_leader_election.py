@@ -454,3 +454,114 @@ async def test_stop_cancels_lease_task(enabled_le: LeaderElection) -> None:
 async def test_stop_is_idempotent_when_no_task(enabled_le: LeaderElection) -> None:
     assert enabled_le._lease_task is None
     await enabled_le.stop()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Callback timeout and error isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_leadership_acquired_callback_timeout_does_not_raise(
+    enabled_le: LeaderElection,
+) -> None:
+    """A hanging callback must not block the election loop indefinitely."""
+    # Use an AsyncMock so the coroutine is properly managed; patch wait_for to simulate timeout
+    callback = AsyncMock()
+    enabled_le.on_started_leading(callback)
+    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+        # Must not raise
+        await enabled_le._on_leadership_acquired("port-ocean-test")
+
+    # Flag is still set even after callback timeout
+    assert enabled_le.is_leader
+
+
+@pytest.mark.asyncio
+async def test_on_leadership_acquired_callback_error_does_not_raise(
+    enabled_le: LeaderElection,
+) -> None:
+    """A failing callback must not propagate and crash the election loop."""
+    callback = AsyncMock(side_effect=RuntimeError("boom"))
+    enabled_le.on_started_leading(callback)
+
+    await enabled_le._on_leadership_acquired("port-ocean-test")
+
+    assert enabled_le.is_leader
+    callback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_on_leadership_lost_callback_error_does_not_raise(
+    enabled_le: LeaderElection,
+) -> None:
+    callback = AsyncMock(side_effect=RuntimeError("boom"))
+    enabled_le.on_stopped_leading(callback)
+    enabled_le._is_leader = True
+
+    await enabled_le._on_leadership_lost("port-ocean-test")
+
+    assert not enabled_le.is_leader
+    callback.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# replace_namespaced_lease conflict handling (409/422)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_try_acquire_returns_false_on_replace_conflict(
+    enabled_le: LeaderElection,
+) -> None:
+    """409 on replace means another instance won the simultaneous take-over race."""
+    ApiException409 = _make_api_exception(409)
+    original = _inject_k8s_modules(ApiException409)
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        # Expired lease — we'd try to take it
+        lease = _make_lease(
+            "old-pod", now - datetime.timedelta(seconds=20), lease_duration=15
+        )
+
+        coordination_v1 = AsyncMock()
+        coordination_v1.read_namespaced_lease = AsyncMock(return_value=lease)
+        coordination_v1.replace_namespaced_lease = AsyncMock(
+            side_effect=ApiException409()
+        )
+
+        result = await enabled_le._try_acquire_or_renew(
+            coordination_v1, "port-ocean-test"
+        )
+
+        assert result is False
+    finally:
+        _restore_k8s_modules(original)
+
+
+@pytest.mark.asyncio
+async def test_try_acquire_returns_false_on_replace_unprocessable(
+    enabled_le: LeaderElection,
+) -> None:
+    """422 Unprocessable (resourceVersion conflict) on replace is also a lost race."""
+    ApiException422 = _make_api_exception(422)
+    original = _inject_k8s_modules(ApiException422)
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        lease = _make_lease(
+            "old-pod", now - datetime.timedelta(seconds=20), lease_duration=15
+        )
+
+        coordination_v1 = AsyncMock()
+        coordination_v1.read_namespaced_lease = AsyncMock(return_value=lease)
+        coordination_v1.replace_namespaced_lease = AsyncMock(
+            side_effect=ApiException422()
+        )
+
+        result = await enabled_le._try_acquire_or_renew(
+            coordination_v1, "port-ocean-test"
+        )
+
+        assert result is False
+    finally:
+        _restore_k8s_modules(original)
