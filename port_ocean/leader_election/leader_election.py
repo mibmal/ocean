@@ -3,6 +3,7 @@ import datetime
 import os
 import random
 import socket
+import time
 from typing import TYPE_CHECKING, Callable, Awaitable
 
 if TYPE_CHECKING:
@@ -50,6 +51,16 @@ class LeaderElection:
         self._coordination_v1: "CoordinationV1Api | None" = None  # type: ignore[assignment]
         self._lease_name: str | None = None
 
+        # Metrics
+        self._leadership_transitions: int = 0
+        self._last_renewal_latency_ms: float = 0.0
+        self._last_successful_renewal: float | None = None
+        self._consecutive_errors: int = 0
+
+        # Exponential backoff config
+        self._backoff_base: float = retry_period
+        self._backoff_max: float = min(lease_duration, 60.0)
+
     @staticmethod
     def _detect_namespace() -> str:
         """Read the pod namespace from the service account mount (standard in K8s)."""
@@ -66,6 +77,18 @@ class LeaderElection:
     @property
     def identity(self) -> str:
         return self._identity
+
+    @property
+    def leadership_transitions(self) -> int:
+        return self._leadership_transitions
+
+    @property
+    def last_renewal_latency_ms(self) -> float:
+        return self._last_renewal_latency_ms
+
+    @property
+    def consecutive_errors(self) -> int:
+        return self._consecutive_errors
 
     def on_started_leading(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Register a callback to run when this instance becomes leader."""
@@ -106,10 +129,12 @@ class LeaderElection:
             await self._release_lease()
 
     async def _on_leadership_acquired(self, lease_name: str) -> None:
+        self._leadership_transitions += 1
         logger.info(
             "Acquired leadership",
             identity=self._identity,
             lease=lease_name,
+            total_transitions=self._leadership_transitions,
         )
         self._is_leader = True
         for cb in self._on_started_leading_callbacks:
@@ -179,31 +204,58 @@ class LeaderElection:
 
         while True:
             try:
+                t0 = time.monotonic()
                 acquired = await self._try_acquire_or_renew(coordination_v1, lease_name)
+                self._last_renewal_latency_ms = (time.monotonic() - t0) * 1000
+
                 if acquired and not self._is_leader:
                     await self._on_leadership_acquired(lease_name)
                 elif not acquired and self._is_leader:
                     await self._on_leadership_lost(lease_name)
 
+                if acquired:
+                    self._last_successful_renewal = time.monotonic()
+
+                # Reset backoff on any successful API round-trip
+                self._consecutive_errors = 0
+
             except ApiException as e:
+                self._consecutive_errors += 1
                 logger.warning(
                     "K8s API error during leader election, will retry",
                     error=str(e),
                     identity=self._identity,
+                    consecutive_errors=self._consecutive_errors,
                 )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                self._consecutive_errors += 1
                 logger.warning(
                     "Unexpected error during leader election, will retry",
                     error=str(e),
                     identity=self._identity,
+                    consecutive_errors=self._consecutive_errors,
                 )
 
             if self._is_leader:
                 sleep_seconds = self._renew_deadline
+            elif self._consecutive_errors > 0:
+                # Exponential backoff with jitter on errors
+                backoff = min(
+                    self._backoff_base * (2 ** (self._consecutive_errors - 1)),
+                    self._backoff_max,
+                )
+                jitter = random.uniform(0, backoff * 0.1)
+                sleep_seconds = backoff + jitter
+                logger.debug(
+                    "Backing off before next leader election attempt",
+                    backoff_seconds=round(sleep_seconds, 2),
+                    consecutive_errors=self._consecutive_errors,
+                    identity=self._identity,
+                )
             else:
-                # Add up to 10% jitter so followers don't all retry simultaneously
+                # Normal follower retry with jitter
                 jitter = random.uniform(0, self._retry_period * 0.1)
                 sleep_seconds = self._retry_period + jitter
             await asyncio.sleep(sleep_seconds)

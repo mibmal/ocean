@@ -47,4 +47,17 @@ def create_health_router(app: "Ocean") -> APIRouter:
             )
         return JSONResponse({"status": "ok"})
 
+    @router.get("/leaderz")
+    async def leaderz() -> JSONResponse:
+        le = app.leader_election
+        return JSONResponse(
+            {
+                "identity": le.identity,
+                "is_leader": le.is_leader,
+                "leadership_transitions": le.leadership_transitions,
+                "last_renewal_latency_ms": round(le.last_renewal_latency_ms, 2),
+                "consecutive_errors": le.consecutive_errors,
+            }
+        )
+
     return router

@@ -669,3 +669,45 @@ async def test_stop_release_failure_does_not_raise(
         await enabled_le.stop()
     finally:
         _restore_k8s_modules(original)
+
+
+# ---------------------------------------------------------------------------
+# Metrics / observability
+# ---------------------------------------------------------------------------
+
+
+def test_initial_metrics_are_zero(enabled_le: LeaderElection) -> None:
+    assert enabled_le.leadership_transitions == 0
+    assert enabled_le.last_renewal_latency_ms == 0.0
+    assert enabled_le.consecutive_errors == 0
+
+
+@pytest.mark.asyncio
+async def test_leadership_transitions_increments_on_acquire(
+    enabled_le: LeaderElection,
+) -> None:
+    assert enabled_le.leadership_transitions == 0
+    await enabled_le._on_leadership_acquired("port-ocean-test")
+    assert enabled_le.leadership_transitions == 1
+    # Lose and re-acquire
+    await enabled_le._on_leadership_lost("port-ocean-test")
+    await enabled_le._on_leadership_acquired("port-ocean-test")
+    assert enabled_le.leadership_transitions == 2
+
+
+# ---------------------------------------------------------------------------
+# Exponential backoff
+# ---------------------------------------------------------------------------
+
+
+def test_backoff_max_is_capped(enabled_le: LeaderElection) -> None:
+    """Backoff max should be capped at min(lease_duration, 60)."""
+    assert enabled_le._backoff_max == min(enabled_le._lease_duration, 60.0)
+
+
+def test_backoff_base_matches_retry_period(enabled_le: LeaderElection) -> None:
+    assert enabled_le._backoff_base == enabled_le._retry_period
+
+
+def test_consecutive_errors_starts_at_zero(enabled_le: LeaderElection) -> None:
+    assert enabled_le._consecutive_errors == 0
