@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import os
 import random
 import socket
 from typing import TYPE_CHECKING, Callable, Awaitable
@@ -42,10 +43,12 @@ class LeaderElection:
         self._renew_deadline = renew_deadline
         self._retry_period = retry_period
         self._is_leader = not enabled  # single-instance always starts as leader
-        self._identity = socket.gethostname()
+        self._identity = os.environ.get("POD_NAME", socket.gethostname())
         self._on_started_leading_callbacks: list[Callable[[], Awaitable[None]]] = []
         self._on_stopped_leading_callbacks: list[Callable[[], Awaitable[None]]] = []
         self._lease_task: asyncio.Task[None] | None = None
+        self._coordination_v1: "CoordinationV1Api | None" = None  # type: ignore[assignment]
+        self._lease_name: str | None = None
 
     @staticmethod
     def _detect_namespace() -> str:
@@ -99,6 +102,8 @@ class LeaderElection:
                 await self._lease_task
             except asyncio.CancelledError:
                 pass
+        if self._is_leader and self._coordination_v1 and self._lease_name:
+            await self._release_lease()
 
     async def _on_leadership_acquired(self, lease_name: str) -> None:
         logger.info(
@@ -169,6 +174,8 @@ class LeaderElection:
 
         coordination_v1 = client.CoordinationV1Api()
         lease_name = f"port-ocean-{self._integration_identifier}"
+        self._coordination_v1 = coordination_v1
+        self._lease_name = lease_name
 
         while True:
             try:
@@ -297,3 +304,36 @@ class LeaderElection:
                 # Another instance created it simultaneously — we lost the race
                 return False
             raise
+
+    async def _release_lease(self) -> None:
+        """Release the lease on graceful shutdown so followers can take over immediately."""
+        try:
+
+            assert self._coordination_v1 is not None
+            assert self._lease_name is not None
+
+            lease = await self._coordination_v1.read_namespaced_lease(  # type: ignore[union-attr]
+                name=self._lease_name, namespace=self._namespace
+            )
+            if lease.spec.holder_identity != self._identity:
+                return
+
+            # Clear the holder so another instance can acquire immediately
+            lease.spec.holder_identity = None
+            lease.spec.lease_duration_seconds = 0
+            await self._coordination_v1.replace_namespaced_lease(  # type: ignore[union-attr]
+                name=self._lease_name,
+                namespace=self._namespace,
+                body=lease,
+            )
+            logger.info(
+                "Released leadership lease for fast failover",
+                identity=self._identity,
+                lease=self._lease_name,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to release lease on shutdown (failover will happen after lease expiry)",
+                error=str(e),
+                identity=self._identity,
+            )

@@ -24,6 +24,7 @@ from port_ocean.context.ocean import (
     ocean,
 )
 from port_ocean.core.handlers.resync_state_updater import ResyncStateUpdater
+from port_ocean.health import create_health_router
 from port_ocean.core.handlers.webhook.processor_manager import (
     LiveEventsProcessorManager,
 )
@@ -120,6 +121,7 @@ class Ocean:
         )
 
         self.app_initialized = False
+        self.started = False
 
         signal_handler.register(self._report_resync_aborted, priority=100)
 
@@ -281,6 +283,9 @@ class Ocean:
         self.fast_api_app.include_router(
             self.metrics.create_mertic_router(), prefix=f"{self.route_prefix}/metrics"
         )
+        self.fast_api_app.include_router(
+            create_health_router(self), prefix=self.route_prefix
+        )
 
         @asynccontextmanager
         async def lifecycle(_: FastAPI) -> AsyncIterator[None]:
@@ -289,12 +294,14 @@ class Ocean:
                 await self.integration.start()
                 await self._register_addons()
                 await self._setup_scheduled_resync()
+                self.started = True
                 yield None
             except Exception:
                 logger.exception("Integration had a fatal error. Shutting down.")
                 logger.complete()
                 sys.exit("Server stopped")
             finally:
+                self.started = False
                 await self.leader_election.stop()
                 await signal_handler.exit()
 

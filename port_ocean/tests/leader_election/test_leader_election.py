@@ -14,6 +14,7 @@ Strategy
 
 import asyncio
 import datetime
+import os
 import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -109,7 +110,12 @@ def disabled_le() -> LeaderElection:
 @pytest.fixture
 def enabled_le() -> LeaderElection:
     """Leader election enabled with a fixed identity."""
-    with patch("socket.gethostname", return_value="pod-abc"):
+    with (
+        patch("socket.gethostname", return_value="pod-abc"),
+        patch.dict("os.environ", {}, clear=False),
+    ):
+        # Ensure POD_NAME is not set so we fall back to gethostname
+        os.environ.pop("POD_NAME", None)
         return LeaderElection(
             enabled=True,
             integration_identifier="test-integration",
@@ -563,5 +569,103 @@ async def test_try_acquire_returns_false_on_replace_unprocessable(
         )
 
         assert result is False
+    finally:
+        _restore_k8s_modules(original)
+
+
+# ---------------------------------------------------------------------------
+# Pod identity from Downward API env var
+# ---------------------------------------------------------------------------
+
+
+def test_identity_from_pod_name_env_var() -> None:
+    """POD_NAME env var takes precedence over socket.gethostname()."""
+    with patch.dict("os.environ", {"POD_NAME": "my-pod-xyz"}):
+        le = LeaderElection(
+            enabled=True,
+            integration_identifier="test",
+            namespace="default",
+        )
+    assert le.identity == "my-pod-xyz"
+
+
+def test_identity_falls_back_to_hostname_without_env_var() -> None:
+    """Without POD_NAME, falls back to socket.gethostname()."""
+    with (
+        patch.dict("os.environ", {}, clear=False),
+        patch("socket.gethostname", return_value="fallback-host"),
+    ):
+        os.environ.pop("POD_NAME", None)
+        le = LeaderElection(
+            enabled=True,
+            integration_identifier="test",
+            namespace="default",
+        )
+    assert le.identity == "fallback-host"
+
+
+# ---------------------------------------------------------------------------
+# Graceful lease release on stop()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stop_releases_lease_when_leader(enabled_le: LeaderElection) -> None:
+    """On graceful shutdown, the leader should clear the lease for fast failover."""
+    ApiException = _make_api_exception(0)
+    original = _inject_k8s_modules(ApiException)
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        lease = _make_lease(enabled_le.identity, now)
+
+        coordination_v1 = AsyncMock()
+        coordination_v1.read_namespaced_lease = AsyncMock(return_value=lease)
+        coordination_v1.replace_namespaced_lease = AsyncMock(return_value=MagicMock())
+
+        # Simulate being the leader with active lease refs
+        enabled_le._is_leader = True
+        enabled_le._coordination_v1 = coordination_v1
+        enabled_le._lease_name = "port-ocean-test"
+
+        await enabled_le.stop()
+
+        # Should have cleared the holder
+        coordination_v1.replace_namespaced_lease.assert_awaited_once()
+        assert lease.spec.holder_identity is None
+        assert lease.spec.lease_duration_seconds == 0
+    finally:
+        _restore_k8s_modules(original)
+
+
+@pytest.mark.asyncio
+async def test_stop_skips_release_when_not_leader(enabled_le: LeaderElection) -> None:
+    """Followers should not try to release a lease they don't hold."""
+    coordination_v1 = AsyncMock()
+    enabled_le._coordination_v1 = coordination_v1
+    enabled_le._lease_name = "port-ocean-test"
+    enabled_le._is_leader = False
+
+    await enabled_le.stop()
+
+    coordination_v1.read_namespaced_lease.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stop_release_failure_does_not_raise(
+    enabled_le: LeaderElection,
+) -> None:
+    """If lease release fails, stop() must not raise — failover will happen after expiry."""
+    ApiException500 = _make_api_exception(500)
+    original = _inject_k8s_modules(ApiException500)
+    try:
+        coordination_v1 = AsyncMock()
+        coordination_v1.read_namespaced_lease = AsyncMock(side_effect=ApiException500())
+
+        enabled_le._is_leader = True
+        enabled_le._coordination_v1 = coordination_v1
+        enabled_le._lease_name = "port-ocean-test"
+
+        # Must not raise
+        await enabled_le.stop()
     finally:
         _restore_k8s_modules(original)
